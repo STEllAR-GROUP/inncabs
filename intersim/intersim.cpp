@@ -15,10 +15,6 @@
 
 #define MAX_PORTS 3
 
-#define HERE std::cout << __FILE__ << ":" << __LINE__ << ": here\n"
-#define FORK(I) std::cout << __FILE__ << ":" << __LINE__ << ": fork " << I << "\n"
-#define JOIN(I) std::cout << __FILE__ << ":" << __LINE__ << ": join " << I << "\n"
-
 typedef hpx::lcos::local::guard_set guard_set;
 typedef std::shared_ptr<hpx::lcos::local::guard> guard_ptr;
 
@@ -314,22 +310,16 @@ void check_done() {
     complete.set_value();
   }
   assert(res >= 0);
-  std::cout << "DONE=" << res << std::endl;
 }
 
 void handleCell2(const inncabs::launch l,Cell *a,Cell *b,Cell *x,Cell *y,Cell *z,Cell *w,Symbol aSym,Symbol bSym,guard seq,std::shared_ptr<std::promise<void>> p);
 
 void handleCell(const inncabs::launch l, Cell* a);
 void handleCell0(const inncabs::launch l, Cell* a) {
-  JOIN(0);
-  HERE;
   handleCell(l,a);
-  HERE;
 }
 void handleCell(const inncabs::launch l, Cell* a) {
-  HERE;
   std::shared_ptr<std::promise<void>> p{new std::promise<void>()};
-  FORK(10);
 	Cell * b = a->getPrinciplePort().cell;
   /**
    * When replacing guards with mutexes we must break up
@@ -346,10 +336,8 @@ void handleCell(const inncabs::launch l, Cell* a) {
   /**
    * Locked regions are new subroutines invoked with the run_guarded() call.
    */
-  FORK(1);
   run_guarded(gs,[seq,p,a,b,l](){
 
-    JOIN(1);
 	  Symbol aSym = a->getSymbol();
 	  Symbol bSym = b->getSymbol();
 
@@ -359,11 +347,8 @@ void handleCell(const inncabs::launch l, Cell* a) {
        * To unlock and continue execution, call a new subroutine.
        */
 	  	//unlockAll(a->getLock(), b->getLock());
-      FORK(2);
 	  	run_guarded(*seq,[p,l,b](){
-        JOIN(2);
         handleCell(l, b);
-        JOIN(10);
         //p->set_value();
       });
 	  	return;
@@ -400,7 +385,6 @@ void handleCell(const inncabs::launch l, Cell* a) {
     if(y) gs.add(y->getLock());
     if(z) gs.add(z->getLock());
     if(w) gs.add(w->getLock());
-    FORK(3);
     run_guarded(gs,std::bind(handleCell2,l,a,b,x,y,z,w,aSym,bSym,seq,p));
   });
   //p->get_future().wait();
@@ -410,7 +394,6 @@ void handleCell2(const inncabs::launch l,Cell *a,Cell *b,Cell *x,Cell *y,Cell *z
 	//unlockAll(*aLock, *bLock);
 	//std::lock(*aLock, *bLock, *xLock, *yLock, *zLock, *wLock);
 
-  JOIN(3);
 	if(    a->getPrinciplePort().cell != b
 		|| a->dead() || b->dead()
 		|| (x && x->dead()) || (y && y->dead()) || (z && z->dead()) || (w && w->dead())
@@ -422,14 +405,11 @@ void handleCell2(const inncabs::launch l,Cell *a,Cell *b,Cell *x,Cell *y,Cell *z
 		|| bSym != b->getSymbol()) {
 		// need to retry later
 		//unlockAll(*aLock, *bLock, *xLock, *yLock, *zLock, *wLock);
-    FORK(4);
     run_guarded(*seq,[a,l,p](){
-      JOIN(4);
 		  if(!a->dead()) {
         done++;
         handleCell(l, a);
       }
-      JOIN(10);
       //p->set_value();
       check_done();
     });
@@ -647,15 +627,12 @@ void handleCell2(const inncabs::launch l,Cell *a,Cell *b,Cell *x,Cell *y,Cell *z
 	//unlockAll(*aLock, *bLock, *xLock, *yLock, *zLock, *wLock);
 	/*std::cout << "unlocked on " << a << ", " << b << " locks: " <<  *(int*)&a->getLock() << " / " <<  *(int*)&b->getLock() << std::endl;*/
 
-  FORK(5);
   run_guarded(*seq,[newTasks,l,p](){
-    JOIN(5);
   	std::vector<inncabs::future<void>> futures;
   	//for(Cell* c : newTasks) futures.push_back(inncabs::async(l, &handleCell, l, c));
     done += newTasks.size();
   	for(Cell* c : newTasks) inncabs::async(l, &handleCell, l, c);
   	//for(auto& f : futures) f.wait();
-    JOIN(10);
     //p->set_value();
     check_done();
   });
@@ -673,12 +650,9 @@ void compute(const inncabs::launch l, Cell* net) {
 	for(const Cell* cur : cells) {
 		const Port& port = cur->getPrinciplePort();
 		if(cur < port.cell && isCut(cur, port.cell)) {
-      FORK(0);
       done++;
 			//cuts.push_back(inncabs::async(l, handleCell0, l, const_cast<Cell*>(cur)));
-      HERE;
 			inncabs::async(l, handleCell0, l, const_cast<Cell*>(cur));
-      HERE;
 		}
 	}
   check_done();
