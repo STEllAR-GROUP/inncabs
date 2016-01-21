@@ -141,9 +141,17 @@ namespace inncabs {
 	BenchResult benchmark(Executor x, Checker c, const inncabs::launch l, const std::function<void()>& initializer) {
 		initializer();
 		std::chrono::high_resolution_clock highc;
+#if defined(INNCABS_USE_HPX)
+        // std::cout << "Resetting counters\n";
+        hpx::reset_active_counters();
+#endif
 		auto start = highc.now();
 		auto r =  x(l);
 		auto end = highc.now();
+#if defined(INNCABS_USE_HPX)
+        // std::cout << "Evaluating counters\n";
+        hpx::evaluate_active_counters(false);
+#endif
 		return BenchResult(c(r), std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
 	}
 
@@ -199,9 +207,6 @@ namespace inncabs {
 				for(unsigned i = 0; i < repeats; ++i) {
 					res = benchmark(x, c, std::get<0>(config), initializer);
 					times.push_back(std::get<1>(res));
-#if defined(INNCABS_USE_HPX)
-                    hpx::evaluate_active_counters(true);
-#endif
 				}
 				long long mid_time = median(times);
 				double std_dev = stddev(times);
