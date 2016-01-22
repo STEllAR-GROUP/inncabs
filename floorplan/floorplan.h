@@ -3,6 +3,9 @@
 #include <vector>
 #include <string.h>
 
+std::atomic<int> tasks(0);
+int task_limit = 5000;
+
 #define ROWS 64
 #define COLS 64
 #define DMAX 64
@@ -199,6 +202,8 @@ int add_cell(const inncabs::launch l, int id, coor FOOTPRINT, ibrd BOARD, struct
 		nnl += nn;
 		/* for all possible locations */
 		for (j = 0; j < nn; j++) {
+            if (tasks >= task_limit) continue; // set limit for fair comparison
+            tasks++;
 			futures.push_back( inncabs::async(l, [&, i, j, id, nn]() mutable {
 				ibrd board;
 				coor footprint;
@@ -287,9 +292,10 @@ void compute_floorplan(const inncabs::launch l) {
 	footprint[0] = 0;
 	footprint[1] = 0;
 	inncabs::message("Computing floorplan ");
+    tasks = 0;
 	add_cell(l, 1, footprint, board, gcells);
+    std::cout << "Tasks: " << tasks << std::endl;
 	inncabs::message(" completed!\n");
-
 }
 
 void floorplan_end() {

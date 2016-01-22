@@ -17,6 +17,7 @@
 int main(int argc, char** argv) {
 	const char* fn = "input/floorplan/input.5";
 	if(argc > 1) fn = argv[1];
+	if(argc > 2) task_limit = atoi(argv[2]);
 
 	std::stringstream ss;
 	ss << "Floorplan with input file \"" << fn << "\"";
