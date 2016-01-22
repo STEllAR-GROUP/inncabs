@@ -294,7 +294,7 @@ void compute_floorplan(const inncabs::launch l) {
 	inncabs::message("Computing floorplan ");
     tasks = 0;
 	add_cell(l, 1, footprint, board, gcells);
-    std::cout << "Tasks: " << tasks << std::endl;
+    //std::cout << "Tasks: " << tasks << std::endl;
 	inncabs::message(" completed!\n");
 }
 
