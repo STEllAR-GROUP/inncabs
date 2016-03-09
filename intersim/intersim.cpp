@@ -1,15 +1,4 @@
-#ifndef USE_SRB
-  #ifdef INNCABS_USE_HPX
-    #define srb hpx
-  #else
-    #define srb std
-  #endif
-#endif
-
 #if defined(INNCABS_USE_HPX)
-#ifdef USE_SRB
-#error "Can't have both USE_HPX and USE_SRB"
-#endif
 #include <hpx/hpx_main.hpp>
 #include <hpx/hpx.hpp>
 #endif
@@ -21,29 +10,9 @@
 #include <cassert>
 #include <set>
 #include <queue>
-#include <sstream>
-#ifdef INNCABS_USE_HPX
-#include <hpx/lcos/local/composable_guard.hpp>
-#else
-#define NO_HPX
-#include "/home/sbrandt/src/hpx/hpx/lcos/local/composable_guard.hpp"
-#include "/home/sbrandt/src/hpx/src/lcos/local/composable_guard.cpp"
-#endif
+#include <memory>
 
 #define MAX_PORTS 3
-
-#ifdef INNCABS_USE_HPX
-typedef boost::shared_ptr<hpx::lcos::local::guard> guard_ptr;
-using hpx::lcos::local::guard_set;
-#else
-typedef hpx::lcos::local::guard_set guard_set;
-typedef smem::shared_ptr<hpx::lcos::local::guard> guard_ptr;
-#endif
-
-struct guard : public guard_ptr {
-  guard() : guard_ptr(new hpx::lcos::local::guard()) {}
-  ~guard() {}
-};
 
 using namespace std;
 
@@ -70,7 +39,7 @@ class Cell {
 	Symbol symbol;
 	unsigned numPorts;
 	Port ports[MAX_PORTS];
-  guard glock;
+	inncabs::mutex lock;
 	bool alive;
 
 public:
@@ -112,14 +81,12 @@ public:
 	}
 
 	void setPort(unsigned index, const Port& wire) {
-    assert(this != nullptr);
 		assert(index < numPorts);
 		ports[index] = wire;
 	}
 
-	guard getLock() {
-    assert(this != nullptr);
-		return glock;
+	inncabs::mutex& getLock() {
+		return lock;
 	}
 };
 
@@ -319,37 +286,17 @@ namespace {
 
 
 void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
-  std::shared_ptr<srb::promise<void>> p{new srb::promise<void>()};
 	std::shared_ptr<Cell> b{a->getPrinciplePort().cell};
-  assert(b.get() != nullptr);
-	//std::lock(a->getLock(), b->getLock());
-  guard_set gs;
-  gs.add(a->getLock());
-  gs.add(b->getLock());
-
-  run_guarded(gs,[l,a,b,p](){
+	std::lock(a->getLock(), b->getLock());
 
 	Symbol aSym = a->getSymbol();
 	Symbol bSym = b->getSymbol();
 
 	// ensure proper order
 	if(aSym < bSym) {
-		//unlockAll(a->getLock(), b->getLock());
-    #ifdef USE_SRB
-    std::function<void()> f=[l,b,p](){
-		  handleCell(l, b);
-		  //return;
-      p->set_value();
-    };
-    srb::async(f);
-    #else
-    srb::async(srb::launch::async, [l,b,p](){
-		  handleCell(l, b);
-		  //return;
-      p->set_value();
-    });
-    #endif
-    return;
+		unlockAll(a->getLock(), b->getLock());
+		handleCell(l, b);
+		return;
 	}
 
 	/*std::cout << "starting on " << a << ", " << b << std::endl;*/
@@ -359,7 +306,6 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 	std::shared_ptr<Cell> z{b->getNumPorts()>1 ? b->getPort(1).cell : nullptr};
 	std::shared_ptr<Cell> w{b->getNumPorts()>2 ? b->getPort(2).cell : nullptr};
 
-  /*
 	inncabs::mutex xLT, yLT, zLT, wLT;
 	inncabs::mutex* aLock = &a->getLock();
 	inncabs::mutex* bLock = &b->getLock();
@@ -367,18 +313,9 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 	inncabs::mutex* yLock = y ? &y->getLock() : &yLT;
 	inncabs::mutex* zLock = z ? &z->getLock() : &zLT;
 	inncabs::mutex* wLock = w ? &w->getLock() : &wLT;
-  */
-  guard_set gs;
-  gs.add(a->getLock());
-  gs.add(b->getLock());
-  if(x.get() != nullptr) gs.add(x->getLock());
-  if(y.get() != nullptr) gs.add(y->getLock());
-  if(z.get() != nullptr) gs.add(z->getLock());
-  if(w.get() != nullptr) gs.add(w->getLock());
 
-	//unlockAll(*aLock, *bLock);
-	//std::lock(*aLock, *bLock, *xLock, *yLock, *zLock, *wLock);
-  run_guarded(gs,[a,b,x,y,z,w,l,p,aSym,bSym](){
+	unlockAll(*aLock, *bLock);
+	std::lock(*aLock, *bLock, *xLock, *yLock, *zLock, *wLock);
 
 	if(    a->getPrinciplePort().cell != b
 		|| a->dead() || b->dead()
@@ -390,22 +327,9 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 		|| aSym != a->getSymbol()
 		|| bSym != b->getSymbol()) {
 		// need to retry later
-		//unlockAll(*aLock, *bLock, *xLock, *yLock, *zLock, *wLock);
-    #ifdef USE_SRB
-    std::function<void()> f =[l,a,p]() {
-		  if(!a->dead()) handleCell(l, a);
-      p->set_value();
-		  return;
-    };
-    srb::async(f);
-    #else
-    srb::async(srb::launch::async,[l,a,p]() {
-		  if(!a->dead()) handleCell(l, a);
-      p->set_value();
-		  return;
-    });
-    #endif
-    return;
+		unlockAll(*aLock, *bLock, *xLock, *yLock, *zLock, *wLock);
+		if(!a->dead()) handleCell(l, a);
+		return;
 	}
 
 	/*std::cout << "fully locked on " << a << ", " << b << std::endl;*/
@@ -417,7 +341,7 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 		plotGraph(net, file.str());
 		std::cout << "Step: " << counter << " - Processing: " << a->getSymbol() << " vs. " << b->getSymbol() << "\n";
 	*/
-	std::shared_ptr<std::vector<std::shared_ptr<Cell>>> newTasks{new std::vector<std::shared_ptr<Cell>>()};
+	std::vector<std::shared_ptr<Cell>> newTasks;
 	switch(a->getSymbol()) {
 		case '0': {
 			switch(b->getSymbol()) {
@@ -432,7 +356,7 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 				b->die();
 
 				// check whether this is producing a cut
-				if(isCut(x, y)) newTasks->push_back(x);
+				if(isCut(x, y)) newTasks.push_back(x);
 
 				break;
 			}
@@ -452,8 +376,8 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 				b->die();
 
 				// check for new cuts
-				if(isCut(a, x)) newTasks->push_back(x);
-				if(isCut(e, y)) newTasks->push_back(y);
+				if(isCut(a, x)) newTasks.push_back(x);
+				if(isCut(e, y)) newTasks.push_back(y);
 
 				break;
 			}
@@ -473,8 +397,8 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 				b->die();
 
 				// check whether this is producing a cut
-				if(isCut(a, y)) newTasks->push_back(y);
-				if(isCut(n, x)) newTasks->push_back(x);
+				if(isCut(a, y)) newTasks.push_back(y);
+				if(isCut(n, x)) newTasks.push_back(x);
 
 				break;
 			}
@@ -495,8 +419,8 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 				link(a,1,b,1);
 
 				// check for new cuts
-				if(isCut(x, b)) newTasks->push_back(x);
-				if(isCut(y, a)) newTasks->push_back(y);
+				if(isCut(x, b)) newTasks.push_back(x);
+				if(isCut(y, a)) newTasks.push_back(y);
 
 				break;
 			}
@@ -524,8 +448,8 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 				a->die();
 
 				// check for new
-				if(isCut(x, b)) newTasks->push_back(x);
-				if(isCut(d, z)) newTasks->push_back(d);
+				if(isCut(x, b)) newTasks.push_back(x);
+				if(isCut(d, z)) newTasks.push_back(d);
 
 				break;
 			}
@@ -547,9 +471,9 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 				link(a, 0, y);
 
 				// check for new cuts
-				if(isCut(x, b)) newTasks->push_back(x);
-				if(isCut(y, a)) newTasks->push_back(y);
-				if(isCut(z, s)) newTasks->push_back(z);
+				if(isCut(x, b)) newTasks.push_back(x);
+				if(isCut(y, a)) newTasks.push_back(y);
+				if(isCut(z, s)) newTasks.push_back(z);
 
 				break;
 			}
@@ -564,7 +488,7 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 				a->die();
 
 				// check for new cuts
-				if(isCut(x, b)) newTasks->push_back(x);
+				if(isCut(x, b)) newTasks.push_back(x);
 
 				break;
 			}
@@ -591,8 +515,8 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 				a->die();
 
 				// check whether this is producing a cut
-				if(isCut(b, x)) newTasks->push_back(x);
-				if(isCut(n, y)) newTasks->push_back(y);
+				if(isCut(b, x)) newTasks.push_back(x);
+				if(isCut(n, y)) newTasks.push_back(y);
 
 				break;
 			}
@@ -616,32 +540,12 @@ void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
 	}
 
 	/*std::cout << "pre-unlocked on " << a << ", " << b << " locks: " <<  *(int*)&a->getLock() << " / " <<  *(int*)&b->getLock() << std::endl;*/
-	//unlockAll(*aLock, *bLock, *xLock, *yLock, *zLock, *wLock);
+	unlockAll(*aLock, *bLock, *xLock, *yLock, *zLock, *wLock);
 	/*std::cout << "unlocked on " << a << ", " << b << " locks: " <<  *(int*)&a->getLock() << " / " <<  *(int*)&b->getLock() << std::endl;*/
-  #ifdef USE_SRB
-  std::function<void()> f=[newTasks,l,p](){
 
-	  std::vector<srb::future<void>> futures;
-	  for(std::shared_ptr<Cell> c : *newTasks) {
-      std::function<void()> f2 = std::bind(handleCell,l,c);
-      futures.push_back(srb::async(l,f2));
-    }
-	  for(auto& f : futures) f.wait();
-    p->set_value();
-  };
-  srb::async(f);
-  #else
-  srb::async(srb::launch::async,[newTasks,l,p](){
-
-	  std::vector<inncabs::future<void>> futures;
-	  for(std::shared_ptr<Cell> c : *newTasks) futures.push_back(inncabs::async(l, &handleCell, l, c));
-	  for(auto& f : futures) f.wait();
-    p->set_value();
-  });
-  #endif
-  });
-  });
-  p->get_future().wait();
+	std::vector<inncabs::future<void>> futures;
+	for(std::shared_ptr<Cell> c : newTasks) futures.push_back(inncabs::async(l, &handleCell, l, c));
+	for(auto& f : futures) f.wait();
 }
 
 
@@ -651,16 +555,11 @@ void compute(const inncabs::launch l, std::shared_ptr<Cell> net) {
 	set<std::shared_ptr<Cell>> cells = getClosure(net);
 
 	// step 2: get all connected principle ports
-	std::vector<srb::future<void>> cuts;
+	std::vector<inncabs::future<void>> cuts;
 	for(const std::shared_ptr<Cell> cur : cells) {
 		const Port& port = cur->getPrinciplePort();
 		if(cur < port.cell && isCut(cur, port.cell)) {
-      #ifdef USE_SRB
-        std::function<void()> f = std::bind(handleCell, l, cur);
-			  cuts.push_back(srb::async(f));
-      #else
-			  cuts.push_back(srb::async(l, handleCell, l, cur));
-      #endif
+			cuts.push_back(inncabs::async(l, handleCell, l, cur));
 		}
 	}
 
