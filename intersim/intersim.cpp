@@ -10,6 +10,7 @@
 #include <cassert>
 #include <set>
 #include <queue>
+#include <memory>
 
 #define MAX_PORTS 3
 
@@ -22,13 +23,13 @@ class Cell;
 
 // a type forming half a wire connection
 struct Port {
-	Cell* cell;
+	std::shared_ptr<Cell> cell;
 	unsigned port;
-	Port(Cell* cell = 0, unsigned port = 0)
+	Port(std::shared_ptr<Cell> cell = 0, unsigned port = 0)
 	 : cell(cell), port(port) {}
 
-	operator Cell*() const { return cell; }
-	Cell* operator->() const { return cell; }
+	operator std::shared_ptr<Cell>() const { return cell; }
+	std::shared_ptr<Cell> operator->() const { return cell; }
 };
 
 /**
@@ -54,6 +55,8 @@ public:
 
 	void die() {
 		alive = false;
+    for(int i=0;i<MAX_PORTS;i++)
+      ports[i].cell = nullptr;
 	}
 
 	bool dead() {
@@ -88,16 +91,16 @@ public:
 };
 
 
-void link(Cell* a, unsigned portA, Cell* b, unsigned portB) {
+void link(std::shared_ptr<Cell> a, unsigned portA, std::shared_ptr<Cell> b, unsigned portB) {
 	a->setPort(portA, Port(b, portB));
 	b->setPort(portB, Port(a, portA));
 }
 
-void link(Cell* a, unsigned portA, const Port& portB) {
+void link(std::shared_ptr<Cell> a, unsigned portA, const Port& portB) {
 	link(a, portA, portB.cell, portB.port);
 }
 
-void link(const Port& portA, Cell* b, unsigned portB) {
+void link(const Port& portA, std::shared_ptr<Cell> b, unsigned portB) {
 	link(portA.cell, portA.port, b, portB);
 }
 
@@ -140,19 +143,22 @@ struct Duplicator : public Cell {
 
 // ------- Net Construction Operations -------
 
-Cell* toNet(unsigned value) {
+std::shared_ptr<Cell> toNet(unsigned value) {
 
 	// terminal case
-	if (value == 0) return new Zero();
+	if (value == 0) {
+    std::shared_ptr<Cell> z{new Zero()};
+    return z;
+  }
 
 	// other cases
-	auto inner = toNet(value - 1);
-	auto succ = new Succ();
+	std::shared_ptr<Cell> inner{toNet(value - 1)};
+	std::shared_ptr<Cell> succ{new Succ()};
 	link(succ, 1, inner, 0);
 	return succ;
 }
 
-int toValue(Cell* net) {
+int toValue(std::shared_ptr<Cell> net) {
 	// compute value
 	if (net->getSymbol() == '0') return 0;
 	if (net->getSymbol() == 's') {
@@ -163,38 +169,38 @@ int toValue(Cell* net) {
 }
 
 Port add(Port a, Port b) {
-	auto res = new Add();
+	std::shared_ptr<Cell> res{new Add()};
 	link(res, 0, a);
 	link(res, 2, b);
 	return Port(res, 1);
 }
 
 Port mul(Port a, Port b) {
-	auto res = new Mul();
+	std::shared_ptr<Cell> res{new Mul()};
 	link(res, 0, a);
 	link(res, 2, b);
 	return Port(res, 1);
 }
 
-Cell* end(Port a) {
-	auto res = new End();
+std::shared_ptr<Cell> end(Port a) {
+	std::shared_ptr<Cell> res{new End()};
 	link(res, 0, a);
 	return res;
 }
 
 // ------- Computation Operation --------
 
-void compute(Cell* net);
+void compute(std::shared_ptr<Cell> net);
 
 
 // other utilities
-void destroy(const Cell* net);
-void plotGraph(const Cell* cell, const string& filename = "net.dot");
+void destroy(const std::shared_ptr<Cell> net);
+void plotGraph(const std::shared_ptr<Cell> cell, const string& filename = "net.dot");
 
 // -----------------------------------------------------------------------
 
 namespace {
-	void collectClosure(const Cell* cell, set<const Cell*>& res) {
+	void collectClosure(std::shared_ptr<Cell> cell, set<std::shared_ptr<Cell>>& res) {
 		if (!cell) return;
 
 		// add current cell to resulting set
@@ -208,13 +214,13 @@ namespace {
 	}
 }
 
-set<const Cell*> getClosure(const Cell* cell) {
-	set<const Cell*> res;
+set<std::shared_ptr<Cell>> getClosure(const std::shared_ptr<Cell> cell) {
+	set<std::shared_ptr<Cell>> res;
 	collectClosure(cell, res);
 	return res;
 }
 
-void plotGraph(Cell* cell, const string& filename) {
+void plotGraph(std::shared_ptr<Cell> cell, const string& filename) {
 
 	// step 0: open file
 	ofstream file;
@@ -227,13 +233,13 @@ void plotGraph(Cell* cell, const string& filename) {
 	file << "digraph test {\n";
 
 	// step 3: print node and edge description
-	for(const Cell* cur : cells) {
+	for(const std::shared_ptr<Cell> cur : cells) {
 		// add node description
 		file << "\tn" << (cur) << " [label=\"" << cur->getSymbol() << "\"];\n";
 
 		// add ports
 		for(unsigned i=0; i<cur->getNumPorts(); i++) {
-			const Cell* other = cur->getPort(i).cell;
+			const std::shared_ptr<Cell> other = cur->getPort(i).cell;
 
 			if (other) {
 				file << "\tn" << (cur) << " -> n" << (other)
@@ -249,20 +255,21 @@ void plotGraph(Cell* cell, const string& filename) {
 	file.close();
 }
 
-void destroy(const Cell* net) {
+void destroy(const std::shared_ptr<Cell> net) {
 
 	// step 1: get all cells
 	auto cells = getClosure(net);
 
 	// step 2: destroy them
-	for(const Cell* cur : cells) {
-		delete cur;
+	for(const std::shared_ptr<Cell> cur : cells) {
+		//delete cur;
+    cur->die();
 	}
 }
 
 namespace {
 
-	bool isCut(const Cell* a, const Cell* b) {
+	bool isCut(const std::shared_ptr<Cell> a, const std::shared_ptr<Cell> b) {
 		return a->getPrinciplePort().cell == b && b->getPrinciplePort().cell == a;
 	}
 
@@ -278,8 +285,8 @@ namespace {
 }
 
 
-void handleCell(const inncabs::launch l, Cell* a) {
-	Cell * b = a->getPrinciplePort().cell;
+void handleCell(const inncabs::launch l, std::shared_ptr<Cell> a) {
+	std::shared_ptr<Cell> b{a->getPrinciplePort().cell};
 	std::lock(a->getLock(), b->getLock());
 
 	Symbol aSym = a->getSymbol();
@@ -294,10 +301,10 @@ void handleCell(const inncabs::launch l, Cell* a) {
 
 	/*std::cout << "starting on " << a << ", " << b << std::endl;*/
 
-	Cell *x = a->getNumPorts()>1 ? a->getPort(1).cell : nullptr;
-	Cell *y = a->getNumPorts()>2 ? a->getPort(2).cell : nullptr;
-	Cell *z = b->getNumPorts()>1 ? b->getPort(1).cell : nullptr;
-	Cell *w = b->getNumPorts()>2 ? b->getPort(2).cell : nullptr;
+	std::shared_ptr<Cell> x{a->getNumPorts()>1 ? a->getPort(1).cell : nullptr};
+	std::shared_ptr<Cell> y{a->getNumPorts()>2 ? a->getPort(2).cell : nullptr};
+	std::shared_ptr<Cell> z{b->getNumPorts()>1 ? b->getPort(1).cell : nullptr};
+	std::shared_ptr<Cell> w{b->getNumPorts()>2 ? b->getPort(2).cell : nullptr};
 
 	inncabs::mutex xLT, yLT, zLT, wLT;
 	inncabs::mutex* aLock = &a->getLock();
@@ -334,7 +341,7 @@ void handleCell(const inncabs::launch l, Cell* a) {
 		plotGraph(net, file.str());
 		std::cout << "Step: " << counter << " - Processing: " << a->getSymbol() << " vs. " << b->getSymbol() << "\n";
 	*/
-	std::vector<Cell*> newTasks;
+	std::vector<std::shared_ptr<Cell>> newTasks;
 	switch(a->getSymbol()) {
 		case '0': {
 			switch(b->getSymbol()) {
@@ -359,7 +366,7 @@ void handleCell(const inncabs::launch l, Cell* a) {
 				auto y = b->getPort(2);
 
 				// create a new cell
-				auto e = new Eraser();
+				std::shared_ptr<Cell> e{new Eraser()};
 
 				// alter wiring
 				link(a, 0, x);
@@ -380,7 +387,7 @@ void handleCell(const inncabs::launch l, Cell* a) {
 				auto y = b->getPort(2);
 
 				// creat new cell
-				auto n = new Zero();
+				std::shared_ptr<Cell> n{new Zero()};
 
 				// update links
 				link(a, 0, b, 2);
@@ -424,8 +431,8 @@ void handleCell(const inncabs::launch l, Cell* a) {
 				auto z = b->getPort(2);
 
 				// create new cells
-				auto p = new Add();
-				auto d = new Duplicator();
+				std::shared_ptr<Cell> p{new Add()};
+				std::shared_ptr<Cell> d{new Duplicator()};
 
 				// alter wiring
 				link(b, 0, x);
@@ -453,7 +460,7 @@ void handleCell(const inncabs::launch l, Cell* a) {
 				auto z = b->getPort(2);
 
 				// crate new cells
-				auto s = new Succ();
+				std::shared_ptr<Cell> s{new Succ()};
 
 				// alter wiring
 				link(b, 0, x);
@@ -498,7 +505,7 @@ void handleCell(const inncabs::launch l, Cell* a) {
 				auto y = a->getPort(2);
 
 				// creat new cell
-				auto n = new Zero();
+				std::shared_ptr<Cell> n{new Zero()};
 
 				// update links
 				link(b, 0, x);
@@ -537,22 +544,22 @@ void handleCell(const inncabs::launch l, Cell* a) {
 	/*std::cout << "unlocked on " << a << ", " << b << " locks: " <<  *(int*)&a->getLock() << " / " <<  *(int*)&b->getLock() << std::endl;*/
 
 	std::vector<inncabs::future<void>> futures;
-	for(Cell* c : newTasks) futures.push_back(inncabs::async(l, &handleCell, l, c));
+	for(std::shared_ptr<Cell> c : newTasks) futures.push_back(inncabs::async(l, &handleCell, l, c));
 	for(auto& f : futures) f.wait();
 }
 
 
-void compute(const inncabs::launch l, Cell* net) {
+void compute(const inncabs::launch l, std::shared_ptr<Cell> net) {
 
 	// step 1: get all cells in the net
-	set<const Cell*> cells = getClosure(net);
+	set<std::shared_ptr<Cell>> cells = getClosure(net);
 
 	// step 2: get all connected principle ports
 	std::vector<inncabs::future<void>> cuts;
-	for(const Cell* cur : cells) {
+	for(const std::shared_ptr<Cell> cur : cells) {
 		const Port& port = cur->getPrinciplePort();
 		if(cur < port.cell && isCut(cur, port.cell)) {
-			cuts.push_back(inncabs::async(l, handleCell, l, const_cast<Cell*>(cur)));
+			cuts.push_back(inncabs::async(l, handleCell, l, cur));
 		}
 	}
 
@@ -578,13 +585,13 @@ int main(int argc, char** argv) {
 
 	std::stringstream ss;
 	ss << "Intersim (N = " << N << ")";
-	Cell* n;
+	std::shared_ptr<Cell> n;
 	inncabs::run_all(
 		[&](const inncabs::launch l) {
 			compute(l, n);
 			return n;
 		},
-		[&](Cell* result) {
+		[&](std::shared_ptr<Cell> result) {
 			bool ret = toValue(result->getPort(0)) == N*N;
 			// clean up remaining network
 			destroy(result);
