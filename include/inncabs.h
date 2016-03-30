@@ -72,6 +72,7 @@ namespace inncabs {
 	using hpx::launch;
 	using hpx::future;
 	using hpx::thread;
+	using hpx::promise;
 	namespace this_thread { using hpx::this_thread::sleep_for; }
 	using hpx::lcos::local::mutex;
 #else
