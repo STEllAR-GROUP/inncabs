@@ -41,7 +41,7 @@ include_directories(${CMAKE_SOURCE_DIR})
 include_directories(${HPX_INCLUDE_DIR})
 link_directories(${HPX_LIBRARY_DIR})
 
-#add_definitions(-DINNCABS_USE_HPX)
+add_definitions(-DINNCABS_USE_HPX)
 if(INNCABS_USE_HPX_FUTURIZED)
   add_definitions(-DINNCABS_USE_HPX_FUTURIZED)
 endif()
